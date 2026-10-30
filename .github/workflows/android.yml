@@ -1,34 +1,55 @@
-name: Android CI
+name: Build Android APK
 
 on:
-  pull_request:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  push:
+  workflow_dispatch:
 
 jobs:
-  instrumentation-tests:
-    if: github.event.pull_request.draft == false
-    runs-on: [ self-hosted, Android ]
-
+  apk:
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout the code
-        uses: actions/checkout@v5.0.0
+      - uses: actions/checkout@v4
+
+      - name: Check files
+        run: |
+          ls -la
+          for f in capacitor.config.json www/index.html scripts/android-setup.mjs aman.keystore assets/icon-only.png; do
+            test -f "$f" || { echo "MISSING FILE: $f"; exit 1; }
+          done
+
+      - uses: actions/setup-node@v4
         with:
-          token: ${{ github.token }}
-          submodules: recursive
+          node-version: 20
 
-      # Setup Gradle and run Build
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
 
-      - name: Clean gradle cache
-        run: ./gradlew clean
+      - name: Install
+        run: |
+          npm install @capacitor/core@7 @capacitor/android@7 @capacitor/cli@7
+          npm install -D @capacitor/assets@3
 
-      - name: Build with Gradle
-        run: ./gradlew build
+      - name: Add Android platform
+        run: npx cap add android
 
-      # Run tests
-      - name: Run Unit tests
-        run: ./gradlew testDebugUnitTest --stacktrace
+      - name: App icons
+        run: npx @capacitor/assets generate --android --assetPath assets
+
+      - name: Permissions and signing
+        run: node scripts/android-setup.mjs
+
+      - name: Sync web files
+        run: npx cap sync android
+
+      - name: Build APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Aman-APK
+          path: android/app/build/outputs/apk/release/app-release.apk
